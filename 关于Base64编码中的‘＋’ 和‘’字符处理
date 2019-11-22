@@ -1,0 +1,250 @@
+<?php
+/*
+
+https://zh.wikipedia.org/wiki/Base64
+
+关于Base64编码中的‘＋’ 和‘/’字符处理
+ 
+本文链接：https://blog.csdn.net/moxi_wang/article/details/53457286
+
+最近遇到个问题：某些用户反馈自己的密码无法登录，于是打算从整个登录过程入手分析。
+
+1、将密码字符串转data
+
+2、用系统的加密方法进行3DES加密
+
+3、用Base64编码加密之后的NSData数据，得到最终加密之后的字符串。
+
+
+其中1、2两步我想都是调用苹果原生的系统方法应该不会出现问题，就把目光锁定到第3步，Base64编码方法是用网上开源的，直接拿来就用了。
+
+开始调试异常帐号，当走到Base64编码这一步，得到的字符串中含有‘＋’号，后台调试得到的字符中这个符号变为空格，这个地方明显就出问题了。
+
+然后查看了Base64的具体编码作用：将二进制数据（NSData）表示为ASCII文本字符串，用了一个标准化的转化表格将二进制数据的没6位编码为一个字符。
+
+
+发现里面有‘/’ 这个字符，我想到的就是这个字符如果出现在url里面肯定会出问题（笔者没用GET方式），于是翻开了《iOS网络高级编程》，其中第11章在讲解应用之间通信可以传递任何复杂数据的时候，讲到了'＋' 和 '/'在URL中含有特别的含义，可能会导致接受方无法正确解码二进制数据。其中'＋'表示空白字符串，如果数据被解释为空白会导致解析器过早终止或者解释不正确的数据,'/'表示URL的路径部分，这可能会导致解析器过早开始或者结束。
+
+
+找到问题了。查看开源的Base64中指定的编码字符表，发现将所有字符组成字符串：
+
+static const char *kBase64EncodeChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+
+果然有这两个字符吧。
+
+
+解决方案：
+
+1、通过苹果提供的URL编码Base64字符串方法：
+
+base64EncodedDataWithOptions:
+
+
+2、替换Base64（开源框架）中转化表中的编码字符
+
+static const char *kWebSafeBase64EncodeChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+
+通过以上两种方法可以解决这个问题，独立小白必经之路，大神勿喷。
+
+
+rawurldecode   urldecode   + 空格  bug
+
+urldecode可以将+解码成空格 rawurldecode不能 
+
+
+
+
+
+Win Notice 加密说明
+
+ADX系统的Win Notice为了确保信息安全，采取了AES加密。
+
+系统使用的AES加密算法是：
+
+    ECB模式
+    没有使用KeyGenerator
+    没有使用IV
+
+加密后的数据还进行了Base64编码，以便作为URL参数传递。 系统采用的Base64是URL_SAFE版本的，参见Wikipedia的说明，这里base64的字符集中，特殊的两个字符使用的是-和_。
+
+如果您使用Java开发，可以直接使用Google Guava库中的BaseEncoding.base64Url()来进行编码和解码，具体参见最下方下载链接的Java代码示例。
+测试用例
+
+这里是一些加密的例子，左侧是原始的${AUCTION_PRICE}宏的值，右侧是发送Winnotice时加密的结果，可以用来做测试。
+
+这些例子中，使用的key是'c2de1527874d4780a1544cfc80c0a27b'
+
+${AUCTION_PRICE}   Encryted & Base64Url
+100_1421917080755   foovDcAPWkVaeW4Y24jzGOSyaPH9hI48c2FnPCxXa7A
+110_1421917080756   9O0evHnIYsMSHRwYe5Bq5li6bQ0d2PWfPmyrPW60jvo
+120_1421917080758   Ud-fJCz3qwVFoUyzZHydfK53RVeA5Atw2FZJWrZSUcc
+130_1421917080759   FmGi6BLUp4ZrW0xxgCPUbcwRi0IrAFhknmHnQuMGneM
+140_1421917080761   KORQZ2uDq7nWgorvW_lSMgoqdaCT3D4T-Y2CrNttKrM
+150_1421917080763   X_0j8Oq7OFmGU8fgFSRI_uABBEoHMzyDcfY55s0Lk6Y
+160_1421917080764   -rUHrrKZh54rnNfJOvV_l2iPrDwgyHriCfb55PW1H8w
+170_1421917080766   FXS67XoV0_YJ_HsSISpQrli6bQ0d2PWfPmyrPW60jvo
+180_1421917080767   z6ClhbZ-rgJQbHEizsDsHHnfYt4X3ZcR0_82dP6rb1Q
+190_1421917080769   z3C5xFlJmLeiYVXF3ZMYg8wRi0IrAFhknmHnQuMGneM
+200_1421917080770   ayJlImWcD1Ojg-oIgQ9u2uRFY8rXO96kzWR9KAuefH0
+210_1421917080772   rhEHwjPXhS3R2jYEttXbfRfKrcdReiAl_2Asg1QUPpA
+220_1421917080773   obLuyWySTls7boIoJ6HlguABBEoHMzyDcfY55s0Lk6Y
+230_1421917080775   Sfh_knplZxLQ6VpPdpb_duSyaPH9hI48c2FnPCxXa7A
+240_1421917080776   cSWbT9emgrUiu35CcR9x8Vi6bQ0d2PWfPmyrPW60jvo
+250_1421917080778   fVauH9Ay1jVN3Skbq7vgna53RVeA5Atw2FZJWrZSUcc
+260_1421917080779   Q0qLOjKry3LqRS0rWPGsBMwRi0IrAFhknmHnQuMGneM
+270_1421917080781   YFqA1zazjejuAp9-Z3WAqgoqdaCT3D4T-Y2CrNttKrM
+280_1421917080782   AaTY0MB09y6yMfi_O_g9ABfKrcdReiAl_2Asg1QUPpA
+290_1421917080784   _YxVrqfRZ9_x-KcgkwaZeGiPrDwgyHriCfb55PW1H8w
+300_1421917080785   bsDSHzUyWqDHW2u9Ow-UOOSyaPH9hI48c2FnPCxXa7A
+310_1421917080787   OaFfpJUggERhdo3h3R3hL3nfYt4X3ZcR0_82dP6rb1Q
+320_1421917080788   wDdwjQcGbJFFZp9iYW7dS653RVeA5Atw2FZJWrZSUcc
+330_1421917080790   N9cN6zbHZcDeCODM1gVW3ORFY8rXO96kzWR9KAuefH0
+340_1421917080791   04Ijnn84yjqiYgygLZkPXQoqdaCT3D4T-Y2CrNttKrM
+350_1421917080792   XGtyc1MUrBETrPxEOaLb0RfKrcdReiAl_2Asg1QUPpA
+360_1421917080794   KdgWGjWMi32vagFdMy-SM2iPrDwgyHriCfb55PW1H8w
+370_1421917080795   8NdYogjcnCSQ2h7iIAwe8uSyaPH9hI48c2FnPCxXa7A
+380_1421917080797   d-upPnYQCPEb7s9DJpdOrnnfYt4X3ZcR0_82dP6rb1Q
+390_1421917080798   Z-uKpvxCKp_DX-po_sZPSa53RVeA5Atw2FZJWrZSUcc
+400_1421917080800   DDnZZPpbZX_qZCkHjD-eo-RFY8rXO96kzWR9KAuefH0
+410_1421917080801   kKZrXoCyIo6-Avw2oyRAmwoqdaCT3D4T-Y2CrNttKrM
+420_1421917080803   5nJS5lQ_dmRCX49Rg0ggJOABBEoHMzyDcfY55s0Lk6Y
+430_1421917080804   L2VfGXIUup9ldnUcqoLpYWiPrDwgyHriCfb55PW1H8w
+440_1421917080805   rIJn9RpiXTbKHuX0GDZoXuSyaPH9hI48c2FnPCxXa7A
+450_1421917080807   XoadzUXOUSOakX-5Ac_cr3nfYt4X3ZcR0_82dP6rb1Q
+460_1421917080808   1pn_hLmdrEghWC-gpoTdZK53RVeA5Atw2FZJWrZSUcc
+470_1421917080810   b8A0LIpX0sI9NVqcGWpUxORFY8rXO96kzWR9KAuefH0
+480_1421917080811   odC1pYHROC82CYVshEpxnAoqdaCT3D4T-Y2CrNttKrM
+490_1421917080813   X7R_6T_jbMwW5jEk79_xGuABBEoHMzyDcfY55s0Lk6Y
+500_1421917080814   RaaaRDBBfli8KS76jp2Ds2iPrDwgyHriCfb55PW1H8w
+510_1421917080815   N5EhIAgbUSInI8k9Sr6rLeSyaPH9hI48c2FnPCxXa7A
+520_1421917080817   wl0Y91ljxjYoWKe0T34tknnfYt4X3ZcR0_82dP6rb1Q
+530_1421917080818   KRW7zSHl8raG-JrQH33cXK53RVeA5Atw2FZJWrZSUcc
+540_1421917080820   z-o_Z6onZni7Ozz6oGSeOeRFY8rXO96kzWR9KAuefH0
+550_1421917080821   cFhpBtqrzw9QWHYlAh6vDAoqdaCT3D4T-Y2CrNttKrM
+560_1421917080823   33I4H8vAQOlMrCa7bpuEk-ABBEoHMzyDcfY55s0Lk6Y
+570_1421917080824   33zqgmNOLff9DxDlDzSZumiPrDwgyHriCfb55PW1H8w
+580_1421917080826   RWGc_WKpKyuX-f9ZeAzAWli6bQ0d2PWfPmyrPW60jvo
+590_1421917080827   SUw_7FlW3EKIYFXF-eyTv3nfYt4X3ZcR0_82dP6rb1Q
+600_1421917080828   25wS_4QGqu-iTrCFv7hOyq53RVeA5Atw2FZJWrZSUcc
+610_1421917080830   fW4vKOFTzZV_O_SnrSmiQORFY8rXO96kzWR9KAuefH0
+620_1421917080831   IgIWAoYu_F0wUUVw6aJ89QoqdaCT3D4T-Y2CrNttKrM
+630_1421917080833   PwwKcbBtENadEuFJEKv8euABBEoHMzyDcfY55s0Lk6Y
+640_1421917080834   jsbJIc6T8H1SfhoyeELut2iPrDwgyHriCfb55PW1H8w
+650_1421917080835   CLES2Qfvs2P3VtRCS_i-MuSyaPH9hI48c2FnPCxXa7A
+660_1421917080837   bIo9iEWLrjmjJNZCxN-q5nnfYt4X3ZcR0_82dP6rb1Q
+670_1421917080838   4kOQLRDg7JI1cBB3Pbou5K53RVeA5Atw2FZJWrZSUcc
+680_1421917080840   sC7H4EHtdICTVk3x6jFeMuRFY8rXO96kzWR9KAuefH0
+690_1421917080841   LG3g-wJyYUtgzk9R4QNJJwoqdaCT3D4T-Y2CrNttKrM
+700_1421917080842   qdAJN58paDu80MsiaIz52BfKrcdReiAl_2Asg1QUPpA
+710_1421917080844   WzOb0Du-utZ2uznQJ8DXZGiPrDwgyHriCfb55PW1H8w
+720_1421917080845   N7E-PQCdtpWAsVCH15KQheSyaPH9hI48c2FnPCxXa7A
+730_1421917080847   clJq8-rzPpbMYj4oS4oQoXnfYt4X3ZcR0_82dP6rb1Q
+740_1421917080848   rl3BSsro8XtJZQ5Xg2a_s653RVeA5Atw2FZJWrZSUcc
+750_1421917080850   sCye7T2qTMLRep9O6heSyORFY8rXO96kzWR9KAuefH0
+760_1421917080851   ZNtN9Z-FeRXTr14mW1z3xwoqdaCT3D4T-Y2CrNttKrM
+770_1421917080853   zJ5oI5XhPvkajhO3rPQeLuABBEoHMzyDcfY55s0Lk6Y
+780_1421917080854   cnNnuB9-c9f64LIXK_3ODmiPrDwgyHriCfb55PW1H8w
+790_1421917080856   NXDr-_8vdWqxA81ti03RJVi6bQ0d2PWfPmyrPW60jvo
+800_1421917080857   iZ2vhUUsck13ybLPYBc7vXnfYt4X3ZcR0_82dP6rb1Q
+810_1421917080858   fVN5Cp6BbkL3JA5NuRhsFK53RVeA5Atw2FZJWrZSUcc
+820_1421917080860   0asbibkp9xr0nszdr96Q_eRFY8rXO96kzWR9KAuefH0
+830_1421917080861   dTM5BFrFloM2ldNma08dLQoqdaCT3D4T-Y2CrNttKrM
+840_1421917080863   yRbU05t5p7oRbg58zJgzxeABBEoHMzyDcfY55s0Lk6Y
+850_1421917080864   _kgkKEViyP5r6FcHWHDz0miPrDwgyHriCfb55PW1H8w
+860_1421917080865   9kxeHRj6Z8WZb9ChmfJR5OSyaPH9hI48c2FnPCxXa7A
+870_1421917080867   B0KW41DV_0c0MoAoe52mMXnfYt4X3ZcR0_82dP6rb1Q
+880_1421917080868   FDKk6EU0oYtyTvpXCCLAIK53RVeA5Atw2FZJWrZSUcc
+890_1421917080870   dYdOAdPQzepWD-2sCRQ6reRFY8rXO96kzWR9KAuefH0
+900_1421917080871   EvAfJs1Llzl01tNwdQKf7woqdaCT3D4T-Y2CrNttKrM
+910_1421917080873   n1XYIOSemcX9xsmcG2SLjeABBEoHMzyDcfY55s0Lk6Y
+920_1421917080874   siQ5mM6pF6oZzTTDU3ESh2iPrDwgyHriCfb55PW1H8w
+930_1421917080875   _oGmERxTHc1qMv8TK9QoUuSyaPH9hI48c2FnPCxXa7A
+940_1421917080877   hJWdrQZSWPAaG4F33VqqpHnfYt4X3ZcR0_82dP6rb1Q
+950_1421917080878   V3DipTaXI65et0mfeH98Xq53RVeA5Atw2FZJWrZSUcc
+960_1421917080880   Ziv5WdRGKo9N8ARi5awRteRFY8rXO96kzWR9KAuefH0
+970_1421917080881   6cSjSIGrI4pRU2ZjjXY_uQoqdaCT3D4T-Y2CrNttKrM
+980_1421917080883   ni-fkNHH76egQ-ks2zIWXeABBEoHMzyDcfY55s0Lk6Y
+990_1421917080884   _jsy098L055dHZpv_c4OkGiPrDwgyHriCfb55PW1H8w
+1000_1421917080886  5cK3ZhG4TslmmG3U56K6awrpoPxxpXHmaTjQkj1xczE
+1010_1421917080887  NYEAMknLIQ_MZEJixdTjRt9pRuue_ZWO1y1w-aUKruY
+1020_1421917080889  T34zY6QMqaPCNi58mwAK5Jvd2t5ckD7btFHl_jJcsK0
+1030_1421917080890  kGZ0BBSBgyB2jypdt9yElLRQMOWHOTXY7r1k9igx0oE
+1040_1421917080892  K7MuFPralao4pFmHKzyjDe90BW1WaizIpg5cpeApC7Y
+1050_1421917080893  t2YKcpQ22yPj0fw0r95wSQiV5UVcut48zxCqYIVMTl4
+1060_1421917080894  N_8o-h1c5t4mL_Lbb00fW0kv2QhmsPc9hXbjJulpmlM
+1070_1421917080896  xGyOFnoaoqUv1BTRN5uDJwSzP422k6UYVK8dNoTzlSs
+1080_1421917080897  sT11miUPD7rNmh-QnmapFC6Lk6Spkzgb9pwQqVL0mhg
+1090_1421917080898  _9L7DUxjSkin9gxZQy5iPJWoy8dHjEtAJT8tXWhc-Xc
+
+*/
+
+
+$key = 'NDAzMzY3LDE0MjI4';  //可随便写
+$key = 'NDAzMzY3LDE0MjI4';
+echo $decodestr = 'VwSSFElLxs3wWy0LMsTy5Q==';
+
+
+/**
+ * @param string $string 需要加密的字符串
+ * @param string $key 密钥
+ * @return string
+ */
+function encrypt($string, $key)
+{
+
+    // openssl_encrypt 加密不同Mcrypt，对秘钥长度要求，超出16加密结果不变
+    //$data = openssl_encrypt($string, 'AES-128-ECB', $key, OPENSSL_RAW_DATA);
+    
+    //$data = strtolower(bin2hex($data));
+    $data = openssl_encrypt($string, 'AES-128-ECB', $key, OPENSSL_RAW_DATA);
+    $data = base64_encode($data);
+    return $data;
+}
+
+/**
+ * @param string $string 需要解密的字符串
+ * @param string $key 密钥
+ * @return string
+ */
+function decrypt($string, $key)
+{   
+    //$decrypted = openssl_decrypt(base64_decode($string), 'AES-128-ECB', $key, OPENSSL_RAW_DATA);//OPENSSL_ZERO_PADDING
+    $decrypted = openssl_decrypt(base64_decode($string), 'AES-128-ECB', $key, OPENSSL_NO_PADDING);
+   // $decrypted = openssl_decrypt(rawurldecode($string), 'AES-128-ECB', $key, OPENSSL_ZERO_PADDING);
+//var_dump( rtrim( rtrim( $decrypted,chr(0) ), chr(7) ) );
+    return $decrypted;
+
+}
+echo decrypt($decodestr, $key);
+echo "\n";
+echo decrypt($decodestr, $key);
+echo "\n---";
+$base64 = "O-0mVdLfTGAnt3TClMitSg==";
+$base64 = str_replace(['-','_'],['+','/'],$base64);
+var_dump( decrypt(rawurldecode($base64), $key)); echo 'O-0mVdLfTGAnt3TClMitSg=='."\n";
+
+echo "\n";
+
+ //echo $de = encrypt('2301', $key);echo "\n";
+ //echo   decrypt($de, $key);echo "\n";
+ 
+ //echo $de = encrypt('2201', $key);echo "\n";
+ //echo   decrypt($de, $key);echo "\n";
+ 
+ 
+ 
+ function rsa_encrypt($plain_text, $public_key_path){   
+    $public_key = openssl_pkey_get_public(file_get_contents($public_key_path));    
+    openssl_public_encrypt(str_pad($plain_text, 128, "/0", STR_PAD_LEFT), $encrypted, $public_key, OPENSSL_NO_PADDING);    
+    return bin2hex($encrypted);
+ }
+ function rsa_decrypt($encrypted, $private_key_path){    
+    $private_key = openssl_pkey_get_private(file_get_contents($private_key_path));   
+    openssl_private_decrypt(hex2bin($encrypted), $plain_text, $private_key, OPENSSL_NO_PADDING);    
+    return ltrim($plain_text, "/0");
+ }
+ 
+
+?>
